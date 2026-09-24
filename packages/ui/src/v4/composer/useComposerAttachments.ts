@@ -769,16 +769,16 @@ export function useComposerAttachments(
           addPreparedAttachments([createClipboardTextPathComposerAttachment(text, attachment)]);
         } catch (error) {
           logger.warn("[v4-composer-attachments] 创建粘贴文本临时附件失败", error);
-          setAttachmentError(
-            intl.formatMessage(
-              { id: "chat.attachments.readFailed" },
-              { message: error instanceof Error ? error.message : String(error) },
-            ),
-          );
+          // Web 不支持原生临时文件；粘贴已被拦截，须转普通附件上传以保留文本。
+          addAttachmentFiles([
+            new File([text], createClipboardTextAttachmentFilenameForDate(), {
+              type: "text/plain",
+            }),
+          ]);
         }
       })();
     },
-    [addAttachmentFiles, addPreparedAttachments, disabled, intl, platform],
+    [addAttachmentFiles, addPreparedAttachments, disabled, platform],
   );
 
   const clearDragFeedbackTimer = useCallback(() => {

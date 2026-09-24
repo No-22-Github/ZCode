@@ -10,6 +10,7 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { UpdateStatusButton } from "@/UpdateStatusButton.js";
 import { DesktopTopOverlayActionButton } from "@/DesktopTopOverlayActionButton.js";
+import { WebSidebarToggle } from "@/WebSidebarToggle.js";
 import {
   createWindowsCaptionControlsStyle,
   WINDOWS_CAPTION_CONTROLS_RIGHT_INSET_VAR,
@@ -131,6 +132,7 @@ export function DesktopTopOverlay({
             "pointer-events-auto flex items-center gap-1 shrink-0 [app-region:no-drag]",
           )}
         >
+          {!isDesktop && <WebSidebarToggle onToggle={onToggleSidebar} />}
           {usesCustomCaptionArea && (
             <DesktopTopOverlayActionButton
               title={toggleSidebarTitle}
