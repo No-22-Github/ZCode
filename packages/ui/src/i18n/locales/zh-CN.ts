@@ -5403,6 +5403,8 @@ const zhCN: Record<string, string> = {
     "视频附件 {filename} 过大（{size}），请压缩到 {maxSize} 以内后重试。",
   "chat.attachments.oversizedInlinePdf":
     "PDF 附件 {filename} 过大（{size}），请压缩到 {maxSize} 以内后重试。",
+  "chat.attachments.oversizedServerUpload":
+    "附件 {filename} 过大（{size}），上传到服务器最大支持 {maxSize}。",
   "chat.attachments.restoreDropped": "部分草稿附件在重启后无法恢复，请重新添加：{filenames}",
   "chat.attachments.clipboardText": "粘贴文本",
   "chat.attachments.clipboardText.description": "{lineCount} 行",
@@ -6492,6 +6494,11 @@ const zhCN: Record<string, string> = {
   "scheduledPreview.toast.running": "正在运行“{title}”…",
   "scheduledPreview.toast.view": "查看",
   "scheduledPreview.addSchedule": "添加计划",
+  "serverStats.cpu": "CPU",
+  "serverStats.memory": "内存",
+  "serverStats.download": "下行",
+  "serverStats.upload": "上行",
+  "serverStats.ballAriaLabel": "服务器状态：CPU {cpu}%，内存 {memory}%",
 };
 
 export default zhCN;

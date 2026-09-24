@@ -1070,12 +1070,24 @@ function ConversationComposerImpl({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const flush = () => persistDraftNow(draftScopeRef.current);
+    // 移动端浏览器切后台时 pagehide/blur 不保证触发；visibilitychange 是最可靠的落盘时机，
+    // 触发时同时清掉 350ms 防抖定时器，避免延迟写入又把已 flush 的旧草稿重复落一遍。
+    const flushOnHidden = () => {
+      if (document.visibilityState !== "hidden") return;
+      if (draftPersistTimerRef.current !== null) {
+        window.clearTimeout(draftPersistTimerRef.current);
+        draftPersistTimerRef.current = null;
+      }
+      flush();
+    };
     window.addEventListener("pagehide", flush);
     window.addEventListener("blur", flush);
+    document.addEventListener("visibilitychange", flushOnHidden);
     return () => {
       flush();
       window.removeEventListener("pagehide", flush);
       window.removeEventListener("blur", flush);
+      document.removeEventListener("visibilitychange", flushOnHidden);
       if (draftPersistTimerRef.current !== null) {
         window.clearTimeout(draftPersistTimerRef.current);
         draftPersistTimerRef.current = null;

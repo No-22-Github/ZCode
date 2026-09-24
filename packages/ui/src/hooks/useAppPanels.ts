@@ -3,6 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createUuid } from "@zcode/shared";
 import type { EmbeddedBrowserOpenUrlRequest, IPlatformService } from "@zcode/shared";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
+import {
+  readSidebarVisiblePreference,
+  saveSidebarVisiblePreference,
+} from "@/lib/sidebarVisibilityPreference.js";
 // 保活：side pane terminal 跨 workspace 会话上移到模块级 registry。
 // 关闭 terminal tab 时必须显式 release，杀掉 PTY，避免常驻 registry 造成孤儿进程。
 import { sidePaneTerminalSessionRegistry } from "@/terminal/sidePaneTerminalSessionRegistry.js";
@@ -202,7 +206,12 @@ export function useAppPanels(options: {
   // 交互说明：侧栏显隐按钮放在 App 外层，而不是 Sidebar 内部。
   // 这样即使侧栏被隐藏，入口也仍然留在左上角，不会出现"收起后没有地方再展开"的问题；
   // 同时这里统一处理 macOS 红绿灯安全区，避免按钮和系统窗口控件重叠。
-  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const [isSidebarVisible, setIsSidebarVisible] = useState(readSidebarVisiblePreference);
+  // Bugfix：刷新后侧栏总是回到展开态，用户收起的选择丢失。开合状态现在持久化到
+  // localStorage（读写失败静默忽略），刷新/重载后保持上次的展开或收起。
+  useEffect(() => {
+    saveSidebarVisiblePreference(isSidebarVisible);
+  }, [isSidebarVisible]);
   const [browserNavigationRequest, setBrowserNavigationRequest] =
     useState<BrowserNavigationRequest | null>(null);
   const [allRecentClosedSidePaneTabs, setAllRecentClosedSidePaneTabs] = useState<

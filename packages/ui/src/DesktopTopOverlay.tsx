@@ -122,6 +122,9 @@ export function DesktopTopOverlay({
           usesCustomCaptionArea && "pl-3 ml-px",
           isMacDesktop &&
             (isMacFullscreen ? (!isSidebarVisible ? "pl-5 pt-1" : "pl-3 pt-1") : "pt-1"),
+          // Bugfix：Web 端过去没有任何左边距，侧栏切换按钮整个贴死屏幕左缘，
+          // 与桌面端 pl-3 的对齐节奏不一致，视觉上像图标没居中。补齐同样边距。
+          !isDesktop && "pl-3",
         )}
       >
         <div
@@ -132,7 +135,9 @@ export function DesktopTopOverlay({
             "pointer-events-auto flex items-center gap-1 shrink-0 [app-region:no-drag]",
           )}
         >
-          {!isDesktop && <WebSidebarToggle onToggle={onToggleSidebar} />}
+          {!isDesktop && (
+            <WebSidebarToggle sidebarVisible={isSidebarVisible} onToggle={onToggleSidebar} />
+          )}
           {usesCustomCaptionArea && (
             <DesktopTopOverlayActionButton
               title={toggleSidebarTitle}

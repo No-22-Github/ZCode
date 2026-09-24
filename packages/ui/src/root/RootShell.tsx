@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { AlertDialogHost } from "@/AlertDialogHost.js";
 import { ConfirmDialogHost } from "@/ConfirmDialog.js";
 import { CuaPermissionObservationAttachment } from "@/cua-permission/CuaPermissionObservationAttachment.js";
+import { ServerStatsBall } from "@/components/ServerStatsBall.js";
 
 export function RootShell({ children }: { children: ReactNode }) {
   // Web 远控在手机浏览器里不能用固定 100vh，
@@ -12,6 +13,8 @@ export function RootShell({ children }: { children: ReactNode }) {
       <CuaPermissionObservationAttachment />
       <AlertDialogHost />
       <ConfirmDialogHost />
+      {/* 仅 Web 端渲染；桌面端组件内部直接返回 null */}
+      <ServerStatsBall />
     </div>
   );
 }

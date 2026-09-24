@@ -6,6 +6,7 @@ import {
   ZCodeIntlProvider,
   generateMobileDeviceFingerprint,
   playTaskNotificationSound,
+  readWebActiveSessionRecord,
   setStreamClientId,
   type Theme,
 } from "@zcode/ui";
@@ -367,24 +368,47 @@ async function resolveWebBootstrap(): Promise<WebBootstrapResult> {
     return { wsUrl };
   }
 
+  // Bugfix：刷新后总是回到 workspaces[0] 首页、当前会话丢失。
+  // 恢复优先级：URL ?task= > sessionStorage 记录（Root 的同步 hook 写入）>
+  // 原有的 serverInfo.workspaces[0]；工作区同样优先用记录里的值。
+  // 记录缺失/损坏/会话失效时全部静默退回首页，见 specs/web-refresh-restore-session/spec.md。
+  const storedRecord = readWebActiveSessionRecord();
+  const urlTaskId = params.get("task")?.trim() || undefined;
+  const initialTaskId = urlTaskId ?? storedRecord?.sessionId;
+
   try {
     const response = await fetch("/api/server-info", {
       cache: "no-store",
     });
     if (!response.ok) {
-      return { wsUrl };
+      return { wsUrl, ...(initialTaskId ? { initialTaskId } : {}) };
     }
     const serverInfo = (await response.json()) as Partial<ServerRemoteInfo>;
-    const workspace = Array.isArray(serverInfo.workspaces) ? serverInfo.workspaces[0] : undefined;
+    // 记录与 server-info 的工作区字段名不同，先归一化到 { path, workspaceIdentity }
+    const storedWorkspace = storedRecord
+      ? {
+          path: storedRecord.workspacePath,
+          ...(storedRecord.workspaceIdentity
+            ? { workspaceIdentity: storedRecord.workspaceIdentity }
+            : {}),
+        }
+      : undefined;
+    const workspace =
+      storedWorkspace ??
+      (Array.isArray(serverInfo.workspaces) ? serverInfo.workspaces[0] : undefined);
+    if (!workspace?.path && !initialTaskId) {
+      return { wsUrl };
+    }
     return {
       wsUrl,
       ...(workspace?.path ? { initialWorkspaceAbsPath: workspace.path } : {}),
       ...(workspace?.workspaceIdentity
         ? { initialWorkspaceIdentity: workspace.workspaceIdentity }
         : {}),
+      ...(initialTaskId ? { initialTaskId } : {}),
     };
   } catch {
-    return { wsUrl };
+    return { wsUrl, ...(initialTaskId ? { initialTaskId } : {}) };
   }
 }
 
@@ -422,6 +446,33 @@ function renderWebBootstrapError(error: unknown): void {
   );
 }
 
+/** listSessions 失败（网络/服务异常）同样按“会话不存在”兜底，不阻塞启动。 */
+async function dropStaleInitialTaskId(
+  bootstrap: WebBootstrapResult,
+  services: WebServices,
+): Promise<void> {
+  if (!bootstrap.initialTaskId || !bootstrap.initialWorkspaceAbsPath) {
+    return;
+  }
+  try {
+    const sessions = await services.zcodeAgentService.listSessions({
+      workspacePath: bootstrap.initialWorkspaceAbsPath,
+      ...(bootstrap.initialWorkspaceIdentity
+        ? { workspaceIdentity: bootstrap.initialWorkspaceIdentity }
+        : {}),
+      sessionIds: [bootstrap.initialTaskId],
+      limit: 1,
+    });
+    if (!Array.isArray(sessions) || sessions.length === 0) {
+      bootstrap.initialTaskId = undefined;
+    }
+  } catch {
+    bootstrap.initialTaskId = undefined;
+  }
+}
+
+type WebServices = Awaited<ReturnType<typeof connectViaWebSocket>>;
+
 async function bootstrapWebApp() {
   const params = new URLSearchParams(window.location.search);
   if (isWebOAuthCallback(params)) {
@@ -446,6 +497,9 @@ async function bootstrapWebApp() {
     const services = await connectViaWebSocket(bootstrap.wsUrl, {
       onClose: () => {},
     });
+    // 存下来的会话可能已在服务器侧删除：先查一次会话列表，不在就退回工作区首页，
+    // 不让失效 taskId 进入 Root 后在会话加载处报错。
+    await dropStaleInitialTaskId(bootstrap, services);
     const platform = createWebPlatform();
     document.title = "ZCode - Web + Server";
 

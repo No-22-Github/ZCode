@@ -34,6 +34,12 @@ export class OversizedInlinePdfAttachmentError extends OversizedInlineAttachment
   }
 }
 
+export class OversizedServerUploadAttachmentError extends OversizedInlineAttachmentError {
+  constructor(options: { filename: string; maxSizeBytes: number; sizeBytes: number }) {
+    super("OversizedServerUploadAttachmentError", "oversized-server-upload-attachment", options);
+  }
+}
+
 export class MissingInlinePdfContentError extends Error {
   readonly filename: string;
   readonly sizeBytes: number;

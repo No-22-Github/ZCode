@@ -10,6 +10,7 @@ import {
   OversizedInlineImageAttachmentError,
   OversizedInlinePdfAttachmentError,
   OversizedInlineVideoAttachmentError,
+  OversizedServerUploadAttachmentError,
 } from "@/lib/chatAttachmentErrors.js";
 import {
   basenameFromPath,
@@ -25,6 +26,7 @@ export {
   OversizedInlineImageAttachmentError,
   OversizedInlinePdfAttachmentError,
   OversizedInlineVideoAttachmentError,
+  OversizedServerUploadAttachmentError,
 } from "@/lib/chatAttachmentErrors.js";
 export {
   countClipboardTextLines,
@@ -40,6 +42,11 @@ const INLINE_VIDEO_ATTACHMENT_MAX_BYTES = Math.min(
   PROTOCOL_V4_LIMITS.attachmentMaxBytes,
 );
 const INLINE_TEXT_ATTACHMENT_MAX_CHARS = 64 * 1024;
+/**
+ * Web 端走 /api/upload 的附件上限，与服务端 SERVER_UPLOAD_MAX_BYTES（100MiB，
+ * Cloudflare 免费版请求体上限）保持一致；客户端先预检，避免白传一遍才被 413 拒绝。
+ */
+export const SERVER_UPLOAD_ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024;
 
 export type ChatComposerAttachmentSourceKind = "clipboard-text";
 
@@ -137,8 +144,103 @@ export function revokeChatComposerAttachment(attachment: ChatComposerAttachment)
   }
 }
 
+export interface ChatComposerServerUploadOptions {
+  signal?: AbortSignal;
+  /** 上传进度，接入 composer 现有的附件进度条。 */
+  onProgress?: (progress: { uploadedBytes: number; totalBytes: number }) => void;
+}
+
+export interface SerializeChatComposerAttachmentOptions {
+  /**
+   * Web 端启用服务器上传（platform.canSelectFilePath === false 时由调用方传入）。
+   * 桌面端不传，保持原有“无路径文件仅携带元信息”的行为。
+   */
+  serverUpload?: ChatComposerServerUploadOptions;
+}
+
+/**
+ * 把无本地路径的文件 POST 到同源 /api/upload，返回服务器上的绝对路径。
+ * 用 XMLHttpRequest 是为了拿到 upload.onprogress 接到现有进度条，fetch 的
+ * 上传进度还需要额外的流式 reader，不值得在这里引入。
+ */
+export function uploadChatComposerFileToServer(
+  file: File,
+  filename: string,
+  options: ChatComposerServerUploadOptions = {},
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+    const cleanup = () => {
+      options.signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      xhr.abort();
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const done = (path: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(path);
+    };
+
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) {
+      const error = new Error("附件上传已取消");
+      error.name = "AbortError";
+      fail(error);
+      return;
+    }
+    xhr.open("POST", `/api/upload?filename=${encodeURIComponent(filename)}`);
+    xhr.responseType = "json";
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        options.onProgress?.({ uploadedBytes: event.loaded, totalBytes: event.total });
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status === 413) {
+        fail(
+          new OversizedServerUploadAttachmentError({
+            filename,
+            maxSizeBytes: SERVER_UPLOAD_ATTACHMENT_MAX_BYTES,
+            sizeBytes: file.size,
+          }),
+        );
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        fail(new Error(`附件上传失败（HTTP ${xhr.status}）`));
+        return;
+      }
+      const path = (xhr.response as { path?: unknown } | null)?.path;
+      if (typeof path === "string" && path) {
+        done(path);
+        return;
+      }
+      fail(new Error("附件上传响应缺少文件路径"));
+    };
+    xhr.onerror = () => {
+      fail(new Error("附件上传失败，请检查网络后重试"));
+    };
+    xhr.onabort = () => {
+      const error = new Error("附件上传已取消");
+      error.name = "AbortError";
+      fail(error);
+    };
+    xhr.send(file);
+  });
+}
+
 export async function serializeChatComposerAttachment(
   attachment: ChatComposerAttachment,
+  options?: SerializeChatComposerAttachmentOptions,
 ): Promise<ZCodePromptAttachment> {
   const mimeType = normalizeComposerMimeType(
     attachment.mimeType || inferAttachmentMimeType(attachment.filename),
@@ -246,6 +348,33 @@ export async function serializeChatComposerAttachment(
       localPath: attachment.localPath,
       mimeType,
       ...(attachment.sourceKind === "clipboard-text" ? { sourceKind: "clipboard-text" } : {}),
+      sizeBytes: attachment.sizeBytes,
+    };
+  }
+
+  // Bugfix（Web）：没有 localPath 的非文本文件过去只返回不含内容的元信息附件，
+  // uploadComposerAttachment 会直接丢弃，用户在 Web 上传 ZIP 等文件时 agent 什么都收不到。
+  // Web 部署（canSelectFilePath === false）下先经同源 /api/upload 落盘，
+  // 返回的服务器绝对路径复用 localPath 引用链路，agent 侧与桌面版行为一致；
+  // 桌面端调用方不传 serverUpload，保持原行为。
+  if (options?.serverUpload && attachment.file && !isTextLikeAttachment(attachment)) {
+    if (attachment.sizeBytes > SERVER_UPLOAD_ATTACHMENT_MAX_BYTES) {
+      throw new OversizedServerUploadAttachmentError({
+        filename: attachment.filename,
+        maxSizeBytes: SERVER_UPLOAD_ATTACHMENT_MAX_BYTES,
+        sizeBytes: attachment.sizeBytes,
+      });
+    }
+    const localPath = await uploadChatComposerFileToServer(
+      attachment.file,
+      attachment.filename,
+      options.serverUpload,
+    );
+    return {
+      kind: "file",
+      filename: attachment.filename,
+      localPath,
+      mimeType,
       sizeBytes: attachment.sizeBytes,
     };
   }

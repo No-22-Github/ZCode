@@ -9,6 +9,7 @@ import {
   MissingInlinePdfContentError,
   OversizedInlinePdfAttachmentError,
   OversizedInlineVideoAttachmentError,
+  OversizedServerUploadAttachmentError,
   createChatComposerAttachment,
   createChatComposerPathAttachment,
   createClipboardTextAttachmentFilenameForDate,
@@ -368,7 +369,27 @@ export function useComposerAttachments(
           return;
         }
 
-        const serialized = await serializeChatComposerAttachment(item);
+        const serialized = await serializeChatComposerAttachment(item, {
+          // Web 平台拿不到本地路径，非文本文件先经 /api/upload 落到服务器，
+          // 返回路径走 localPath 引用链路；桌面端保持原有序列化行为。
+          serverUpload:
+            platform.canSelectFilePath === false
+              ? {
+                  signal: controller.signal,
+                  onProgress(progress) {
+                    if (controllersRef.current.get(controllerKey) !== controller) return;
+                    updateItem(targetScopeKey, attachmentId, (current) => ({
+                      ...current,
+                      uploadStatus: "uploading",
+                      uploadProgress: Math.max(
+                        current.uploadProgress,
+                        progressPercent(progress.uploadedBytes, progress.totalBytes),
+                      ),
+                    }));
+                  },
+                }
+              : undefined,
+        });
         const ref = await uploadComposerAttachment(
           target.attachmentPut,
           target.sessionId,
@@ -419,14 +440,23 @@ export function useComposerAttachments(
                     maxSize: formatAttachmentSize(error.maxSizeBytes),
                   },
                 )
-              : error instanceof MissingInlinePdfContentError
+              : error instanceof OversizedServerUploadAttachmentError
                 ? intl.formatMessage(
-                    { id: "chat.attachments.missingInlinePdfContent" },
-                    { filename: error.filename },
+                    { id: "chat.attachments.oversizedServerUpload" },
+                    {
+                      filename: error.filename,
+                      size: formatAttachmentSize(error.sizeBytes),
+                      maxSize: formatAttachmentSize(error.maxSizeBytes),
+                    },
                   )
-                : error instanceof Error
-                  ? error.message
-                  : String(error);
+                : error instanceof MissingInlinePdfContentError
+                  ? intl.formatMessage(
+                      { id: "chat.attachments.missingInlinePdfContent" },
+                      { filename: error.filename },
+                    )
+                  : error instanceof Error
+                    ? error.message
+                    : String(error);
         const transient = isTransientAttachmentUploadError(error);
         if (transient && current.autoRetryCount < 1) {
           updateItem(targetScopeKey, attachmentId, (item) => ({

@@ -5648,6 +5648,8 @@ const enUS: Record<string, string> = {
     "Video attachment {filename} is too large ({size}). Please compress it to {maxSize} or smaller and try again.",
   "chat.attachments.oversizedInlinePdf":
     "PDF attachment {filename} is too large ({size}). Please compress it to {maxSize} or smaller and try again.",
+  "chat.attachments.oversizedServerUpload":
+    "Attachment {filename} is too large ({size}). Server upload supports up to {maxSize}.",
   "chat.attachments.restoreDropped":
     "Some draft attachments could not be restored after restart. Please add them again: {filenames}",
   "chat.attachments.clipboardText": "Pasted text",
@@ -6814,6 +6816,11 @@ const enUS: Record<string, string> = {
   "scheduledPreview.toast.running": "Running “{title}”…",
   "scheduledPreview.toast.view": "View",
   "scheduledPreview.addSchedule": "Add schedule",
+  "serverStats.cpu": "CPU",
+  "serverStats.memory": "Memory",
+  "serverStats.download": "Down",
+  "serverStats.upload": "Up",
+  "serverStats.ballAriaLabel": "Server status: CPU {cpu}%, memory {memory}%",
 };
 
 export default enUS;

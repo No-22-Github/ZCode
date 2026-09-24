@@ -35,12 +35,13 @@ import {
 } from "@/lib/rootStartupGate.js";
 import { StoreProvider, useZCodeStore } from "@/store/StoreProvider.js";
 import { setMcpStorePlatform } from "@/store/mcpStore.js";
-import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { useZCodeSessionStore, selectWorkspaceZCodeState } from "@/store/zcodeSessionStore.js";
 import { TabStoreProvider, useTabStore, useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { isSettingsTab, isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
 import { logger } from "@/logger.js";
 import { RootShell } from "@/root/RootShell.js";
 import { RootWorkspaceContent } from "@/root/RootWorkspaceContent.js";
+import { useWebActiveSessionLocationSync } from "@/root/webActiveSessionLocationSync.js";
 import { resolveRootWorkspaceShellTarget } from "@/root/rootWorkspaceShellTarget.js";
 import { OccupationOnboarding } from "@/onboarding/OccupationOnboarding.js";
 import { OnboardingDialog } from "@/onboarding/OnboardingDialog.js";
@@ -362,6 +363,23 @@ function RootInner({
     workspaceShellRemoteSessionId,
     workspaceShellIdentity,
   );
+
+  // Bugfix（Web）：刷新后总是回到 workspaces[0] 首页、丢失当前会话，因为 Web 入口
+  // 从不给 Root 传 initialTaskId。这里把激活 workspace + activeTaskId 同步到
+  // sessionStorage 与 URL（?task=），启动时由 main.tsx 读回（见
+  // specs/web-refresh-restore-session/spec.md）。桌面有自己的窗口恢复，不同步 URL。
+  const activeShellSessionId = useZCodeSessionStore((state) =>
+    workspaceShellPath
+      ? (selectWorkspaceZCodeState(state, workspaceShellPath, workspaceShellIdentity)
+          .activeTaskId ?? null)
+      : null,
+  );
+  useWebActiveSessionLocationSync({
+    enabled: !isDesktop,
+    workspacePath: workspaceShellPath ?? undefined,
+    workspaceIdentity: workspaceShellIdentity,
+    sessionId: activeShellSessionId,
+  });
 
   const localWorkspacePathForRemoteConnection = useTabStore((state) => {
     const activeTab = state.activeTabId
