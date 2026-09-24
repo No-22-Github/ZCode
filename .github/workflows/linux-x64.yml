@@ -1,0 +1,83 @@
+name: Linux x64 VPS package
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-x64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      ZCODE_ENV: production
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate source and packaging
+        run: |
+          pnpm typecheck
+          pnpm lint
+          pnpm architecture:check --changed
+          node --test scripts/zcode-distribution.test.mjs
+          pnpm exec tsx --tsconfig packages/ui/tsconfig.json --test packages/ui/test/mobilePatches.test.ts
+          systemd-analyze verify scripts/zcode-distribution/deploy/zcode.service
+      - name: Stamp no22 build version
+        id: version
+        run: |
+          node --input-type=module <<'JS'
+          import { readFile, writeFile, appendFile } from 'node:fs/promises';
+          const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+          pkg.version = `${pkg.version}-no22.${process.env.GITHUB_RUN_NUMBER}.${process.env.GITHUB_RUN_ATTEMPT}`;
+          await writeFile('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          await appendFile(process.env.GITHUB_OUTPUT, `version=${pkg.version}\n`);
+          JS
+      - name: Build Linux x64 distribution
+        env:
+          ZCODE_COMMIT: ${{ github.sha }}
+        run: pnpm build:zcode --archive-only
+      - name: Smoke test extracted archive outside checkout
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cd "dist/zcode/releases/$RELEASE_VERSION"
+          sha256sum -c sha256.txt
+          cd "$GITHUB_WORKSPACE"
+          node scripts/zcode-distribution-smoke.mjs "dist/zcode/releases/$RELEASE_VERSION/zcode-$RELEASE_VERSION.tar.gz"
+      - name: Upload verified tarball and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcode-${{ steps.version.outputs.version }}-linux-x64
+          path: |
+            dist/zcode/releases/${{ steps.version.outputs.version }}/zcode-*.tar.gz
+            dist/zcode/releases/${{ steps.version.outputs.version }}/sha256.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Write build summary
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "### Linux x64 VPS package"
+            echo "Archive: zcode-$RELEASE_VERSION.tar.gz"
+            echo "Requires Node 24.x on a glibc Linux x64 host."
+            echo "The archive includes deploy/README.md and deploy/zcode.service."
+            echo "Smoke checks: isolated TUI/native, HTTP, WebSocket, workspace and shutdown."
+          } >> "$GITHUB_STEP_SUMMARY"

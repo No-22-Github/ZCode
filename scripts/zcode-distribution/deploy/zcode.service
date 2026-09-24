@@ -1,0 +1,22 @@
+[Unit]
+Description=ZCode Web and Agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=zcode
+Group=zcode
+WorkingDirectory=/var/lib/zcode/workspaces
+Environment=HOME=/var/lib/zcode
+Environment=ZCODE_DATA_BASE_DIR=/var/lib/zcode/data
+Environment=ZCODE_ENV=production
+ExecStart=/usr/bin/node /opt/zcode/bin/zcode.mjs --web --host 127.0.0.1 --port 3030 --workspace /var/lib/zcode/workspaces --no-open --no-token
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

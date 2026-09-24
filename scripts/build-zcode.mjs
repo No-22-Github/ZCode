@@ -24,6 +24,7 @@ const usage = `Usage:
   node scripts/build-zcode.mjs --base-url http://host/zcode/deps/zcode/
 
 Options:
+  --archive-only      Create archive/checksum only; no download base URL needed.
   --skip-build        Reuse existing web/server/agent build outputs.
   --version <text>    Release version. Defaults to root package.json version.
   --out-dir <path>    Output directory. Defaults to dist/zcode.
@@ -50,6 +51,7 @@ function readArgValue(argv, arg, index) {
 
 function parseArgs(argv) {
   const options = {
+    archiveOnly: false,
     baseUrl: defaultBaseUrl,
     help: false,
     outDir: defaultOutDir,
@@ -68,6 +70,10 @@ function parseArgs(argv) {
     }
     if (arg === "--skip-build") {
       options.skipBuild = true;
+      continue;
+    }
+    if (arg === "--archive-only") {
+      options.archiveOnly = true;
       continue;
     }
     if (arg === "--version" || arg.startsWith("--version=")) {
@@ -202,6 +208,9 @@ async function stageZCodePackage({ packageRoot, version }) {
   const runner = resolve(packageRoot, "bin", "zcode.mjs");
   await cp(resolve(root, "scripts/zcode-distribution/runner.mjs"), runner);
   await chmod(runner, 0o755);
+  await cp(resolve(root, "scripts/zcode-distribution/deploy"), resolve(packageRoot, "deploy"), {
+    recursive: true,
+  });
 
   await writeFile(
     resolve(packageRoot, "package.json"),
@@ -232,7 +241,7 @@ async function createTarball({ packageParent, releaseDir, tarballName }) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  if (!options.help && !options.baseUrl)
+  if (!options.help && !options.archiveOnly && !options.baseUrl)
     throw new Error("Configure ZCODE_DIST_BASE_URL in .env or pass --base-url");
   if (options.help) {
     console.log(usage);
@@ -270,24 +279,26 @@ async function main() {
   const sha256 = await sha256File(tarball);
   await writeFile(resolve(releaseDir, "sha256.txt"), `${sha256}  ${tarballName}\n`);
 
-  await writeFile(
-    resolve(outDir, "latest.json"),
-    JSON.stringify(
-      {
-        baseUrl: options.baseUrl,
-        createdAt: new Date().toISOString(),
-        name: "zcode",
-        sha256,
-        tarball: tarballName,
-        version,
-      },
-      null,
-      2,
-    ),
-  );
-  const installScript = resolve(outDir, "install.sh");
-  await writeFile(installScript, installScriptSource(options.baseUrl));
-  await chmod(installScript, 0o755);
+  if (!options.archiveOnly) {
+    await writeFile(
+      resolve(outDir, "latest.json"),
+      JSON.stringify(
+        {
+          baseUrl: options.baseUrl,
+          createdAt: new Date().toISOString(),
+          name: "zcode",
+          sha256,
+          tarball: tarballName,
+          version,
+        },
+        null,
+        2,
+      ),
+    );
+    const installScript = resolve(outDir, "install.sh");
+    await writeFile(installScript, installScriptSource(options.baseUrl));
+    await chmod(installScript, 0o755);
+  }
   await rm(workDir, {
     force: true,
     recursive: true,

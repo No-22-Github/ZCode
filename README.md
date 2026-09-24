@@ -11,8 +11,6 @@
   简体中文 | <a href="README.en.md">English</a>
 </p>
 
-
-
 ZCode 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Agent。本仓库包含客户端、后端服务、共享 UI，以及 Agent CLI 与运行时源码。
 
 ## 更新
@@ -157,14 +155,21 @@ pnpm bundle:desktop -- --help
 sudo xattr -rd com.apple.quarantine /Applications/ZCode.app
 ```
 
+### Linux x64 VPS（no22 CI）
+
+main 推送或手动运行 GitHub Actions 的 `Linux x64 VPS package` 会生成带 `no22` 构建号的 `.tar.gz` 和 SHA256。Linux CI 原生构建并解包验证，无需在 macOS 交叉编译。systemd、持久化目录及 Cloudflare Tunnel/Access 用法见 [VPS 部署说明](scripts/zcode-distribution/deploy/README.md)。
+
 ### ZCode 命令行版
 
 构建入口为 `pnpm build:zcode`。脚本会依次构建 CLI/TUI、后端和 Web，收集 TUI 的原生库、worker 与运行时依赖，再组装发行包；运行发行包仍需要 Node.js，版本以 `mise.toml` 为准。
 
-打包前必须设置下载根地址 `ZCODE_DIST_BASE_URL`（可放在 `.env`、`.env.local` 或环境变量中），也可以通过 `--base-url` 传入。以下地址是占位示例，发布时替换为实际托管地址：
+默认安装器模式打包前必须设置下载根地址 `ZCODE_DIST_BASE_URL`（可放在 `.env`、`.env.local` 或环境变量中），也可以通过 `--base-url` 传入。以下地址是占位示例，发布时替换为实际托管地址；`--archive-only` 模式无需此地址：
 
 ```bash
 pnpm build:zcode --base-url https://downloads.example.com/zcode/
+
+# 只生成压缩包和校验文件，不生成安装器，也无需下载根地址
+pnpm build:zcode --archive-only
 
 # 已配置 ZCODE_DIST_BASE_URL 时
 pnpm build:zcode
