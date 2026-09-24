@@ -7,6 +7,10 @@ import type { IPty } from "node-pty";
 import type { ISettingService } from "../setting/setting.js";
 import type { ITerminalService, TerminalWindowsPtyInfo } from "./terminal.js";
 import {
+  createTerminalPendingDataBuffer,
+  type TerminalPendingDataBuffer,
+} from "./terminalPendingBuffer.js";
+import {
   resolveTerminalFontProfile,
   type TerminalFontFamilySource,
   type TerminalThemeProfile,
@@ -21,6 +25,8 @@ interface TerminalInstance {
   pty: IPty;
   dataEmitter: Emitter<string>;
   exitEmitter: Emitter<number>;
+  /** Bugfix：PTY 启动到首个订阅者挂载之间的输出缓冲，见 terminalPendingBuffer.ts。 */
+  pending: TerminalPendingDataBuffer;
 }
 
 let hasEnsuredNodePtyHelper = false;
@@ -375,6 +381,7 @@ export function createTerminalService(dependencies: {
       ensureNodePtySpawnHelperExecutable();
       const dataEmitter = new Emitter<string>();
       const exitEmitter = new Emitter<number>();
+      const pending = createTerminalPendingDataBuffer();
 
       let p: IPty;
       try {
@@ -392,7 +399,14 @@ export function createTerminalService(dependencies: {
         );
       }
 
-      p.onData((data) => dataEmitter.fire(data));
+      p.onData((data) => {
+        // Bugfix：create() 返回到前端 onDynamicData 订阅之间存在窗口期，PTY 早期输出
+        // （fish/zsh 登录 greeting、profile 警告）会因尚无订阅者而丢失。
+        // 未 attach 前先把 chunk 存入 pending（上限 64KB、超出丢最旧），
+        // 首个订阅者挂上时由 onDynamicData 一次性补发；实时发射路径保持不变。
+        pending.push(data);
+        dataEmitter.fire(data);
+      });
       p.onExit(({ exitCode }) => {
         exitEmitter.fire(exitCode);
         dataEmitter.dispose();
@@ -400,7 +414,7 @@ export function createTerminalService(dependencies: {
         terminals.delete(id);
       });
 
-      terminals.set(id, { pty: p, dataEmitter, exitEmitter });
+      terminals.set(id, { pty: p, dataEmitter, exitEmitter, pending });
       return {
         id,
         shell,
@@ -425,7 +439,15 @@ export function createTerminalService(dependencies: {
     },
 
     onDynamicData(id: string): Event<string> {
-      return getTerminal(id).dataEmitter.event;
+      const terminal = getTerminal(id);
+      return (listener) => {
+        const disposable = terminal.dataEmitter.event(listener);
+        // Bugfix：首个订阅者挂上时先补发启动窗口期的缓冲输出，再转入实时流。
+        for (const chunk of terminal.pending.attach()) {
+          listener(chunk);
+        }
+        return disposable;
+      };
     },
 
     onDynamicExit(id: string): Event<number> {
