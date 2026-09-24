@@ -37,7 +37,10 @@ jobs:
           pnpm architecture:check --changed
           node --test scripts/zcode-distribution.test.mjs
           pnpm exec tsx --tsconfig packages/ui/tsconfig.json --test packages/ui/test/mobilePatches.test.ts
-          systemd-analyze verify scripts/zcode-distribution/deploy/zcode.service
+          # Runner 的 Node 来自 setup-node 工具缓存；只替换待校验副本，不改 VPS 示例。
+          sed "s|ExecStart=/usr/bin/node |ExecStart=$(command -v node) |" \
+            scripts/zcode-distribution/deploy/zcode.service > "$RUNNER_TEMP/zcode.service"
+          sudo systemd-analyze verify --man=no "$RUNNER_TEMP/zcode.service"
       - name: Stamp no22 build version
         id: version
         run: |
