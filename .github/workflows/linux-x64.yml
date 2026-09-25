@@ -30,6 +30,15 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Restore TypeScript validation cache
+        id: typecheck-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            packages/*/dist
+            packages/desktop/out/host
+            packages/**/*.tsbuildinfo
+          key: typecheck-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', 'tsconfig*.json', 'patches/**', 'packages/**/src/**', 'packages/**/tsconfig*.json', 'packages/**/package.json', 'apps/zcode-cli/**/src/**', 'apps/zcode-cli/**/tsconfig*.json', 'apps/zcode-cli/**/package.json') }}
       - name: Validate source and packaging
         run: |
           pnpm typecheck
@@ -42,6 +51,15 @@ jobs:
           sed "s|ExecStart=/usr/bin/node |ExecStart=$(command -v node) |" \
             scripts/zcode-distribution/deploy/zcode.service > "$RUNNER_TEMP/zcode.service"
           sudo systemd-analyze verify --man=no "$RUNNER_TEMP/zcode.service"
+      - name: Save TypeScript validation cache
+        if: steps.typecheck-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            packages/*/dist
+            packages/desktop/out/host
+            packages/**/*.tsbuildinfo
+          key: ${{ steps.typecheck-cache.outputs.cache-primary-key }}
       - name: Stamp no22 build version
         id: version
         run: |

@@ -38,6 +38,8 @@ flowchart LR
 
 ## Validation
 
+- CI keeps the existing pnpm store cache and adds an exact-input TypeScript cache (emitted package outputs, host outputs and build-info files). Its key includes OS/architecture, pinned toolchain, dependency lock/config, patches and all package/CLI TypeScript inputs and manifests. No prefix fallback: deleted/changed sources get a cold cache. Always rerun typecheck and all validations after restore. Save immediately after validation and before version stamping/build so release bundles never enter this cache. Release assembly and smoke checks always run. Verify both a cold fill and a warm rerun in Actions before claiming a speedup.
+
 - CLI argument regression tests: archive-only does not need a base URL and does not create installer/index; normal mode still requires a base URL and creates them.
 - CI: frozen dependency install, typecheck, lint, architecture check, build all distribution outputs, unpack outside checkout. Verify version, TUI native import/render/keyboard exit, HTTP/static page, expected workspace, WebSocket and SIGTERM shutdown via existing distribution smoke script.
 - Validate systemd unit syntax in Linux CI. Upload .tar.gz + sha256.txt with finite retention after validation succeeds.
