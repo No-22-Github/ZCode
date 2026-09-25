@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: linux-x64-${{ github.ref }}
-  cancel-in-progress: true
+  group: linux-x64-latest-build
+  cancel-in-progress: false
 
 jobs:
   package:
@@ -36,6 +36,7 @@ jobs:
           pnpm lint
           pnpm architecture:check --changed
           node --test scripts/zcode-distribution.test.mjs
+          node --test scripts/publish-latest-build.test.mjs
           pnpm exec tsx --tsconfig packages/ui/tsconfig.json --test packages/ui/test/mobilePatches.test.ts
           # Runner 的 Node 来自 setup-node 工具缓存；只替换待校验副本，不改 VPS 示例。
           sed "s|ExecStart=/usr/bin/node |ExecStart=$(command -v node) |" \
@@ -50,6 +51,7 @@ jobs:
           pkg.version = `${pkg.version}-no22.${process.env.GITHUB_RUN_NUMBER}.${process.env.GITHUB_RUN_ATTEMPT}`;
           await writeFile('package.json', JSON.stringify(pkg, null, 2) + '\n');
           await appendFile(process.env.GITHUB_OUTPUT, `version=${pkg.version}\n`);
+          await appendFile(process.env.GITHUB_OUTPUT, `build_time=${new Date().toISOString()}\n`);
           JS
       - name: Build Linux x64 distribution
         env:
@@ -73,6 +75,12 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+      - name: Publish rolling latest-build release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_TIME: ${{ steps.version.outputs.build_time }}
+        run: bash scripts/publish-latest-build.sh
       - name: Write build summary
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
@@ -80,6 +88,8 @@ jobs:
           {
             echo "### Linux x64 VPS package"
             echo "Archive: zcode-$RELEASE_VERSION.tar.gz"
+            echo "Rolling release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/latest-build"
+            echo "Build version: $RELEASE_VERSION (also available in the build.txt release asset)"
             echo "Requires Node 24.x on a glibc Linux x64 host."
             echo "The archive includes deploy/README.md and deploy/zcode.service."
             echo "Smoke checks: isolated TUI/native, HTTP, WebSocket, workspace and shutdown."
