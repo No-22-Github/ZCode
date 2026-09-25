@@ -45,6 +45,7 @@ import {
 import { connectRemote, createRemoteBackend, type RemoteConnection } from "./remote/index.js";
 import { createHostCapabilityStore } from "./hostCapability.js";
 import { getSysStatsSampler } from "./sysStats.js";
+import { serverStatsRangeSchema } from "@zcode/shared";
 
 function wrapWebSocket(ws: WebSocket): ISocket {
   const onData = new Emitter<VSBuffer>();
@@ -404,9 +405,11 @@ export function createHttpServer(
     return c.json({ path: targetPath });
   });
 
-  // 服务器状态悬浮球数据源：懒启动采样器，无人查看 30 秒后自动停止
+  // 首次请求启动唯一采样器，持续保留有界历史；HTTP 请求不创建额外采样任务。
   app.get("/api/sys-stats", async (c) => {
-    const snapshot = await getSysStatsSampler().touch();
+    const range = serverStatsRangeSchema.safeParse(c.req.query("range") ?? "1m");
+    if (!range.success) return c.json({ error: "Invalid stats range" }, 400);
+    const snapshot = await getSysStatsSampler().touch(range.data);
     return c.json(snapshot);
   });
 

@@ -355,7 +355,30 @@ nodes:
     codeSeeds:
       - file: apps/zcode-cli/packages/core/src/runtime/methods/turn-model.ts
         symbol: applySubmissionExecutionState
+  - id: surface.server-performance-monitor
+    kind: ui-surface
+    label: Web server performance monitor
+    aliases: [server stats, 性能悬浮球, 性能面板]
+    codeSeeds:
+      - file: packages/ui/src/components/ServerStatsBall.tsx
+        symbol: ServerStatsBall
+      - file: packages/ui/src/hooks/useServerStats.ts
+        symbol: useServerStats
+  - id: state.server-system-sampling
+    kind: state-owner
+    label: Server telemetry and bounded history
+    codeSeeds:
+      - file: packages/server/src/sysStats.ts
+        symbol: getSysStatsSampler
+      - file: packages/shared/src/server-stats.ts
+        symbol: serverStatsSnapshotSchema
+    invariants:
+      - "One process-local sampler owns history and UTC traffic; UI persists presentation only."
 edges:
+  - from: surface.server-performance-monitor
+    to: state.server-system-sampling
+    type: reads-from
+    rank: must-inspect
   - from: capability.model-selection
     to: surface.conversation-model-control
     type: renders-in

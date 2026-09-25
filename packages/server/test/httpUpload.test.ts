@@ -101,3 +101,23 @@ test("upload size limiter aborts once the byte cap is exceeded", async () => {
 test("server upload cap is 100MiB", () => {
   assert.equal(SERVER_UPLOAD_MAX_BYTES, 100 * 1024 * 1024);
 });
+
+test("stats route validates range and returns bounded typed snapshots", async () => {
+  const { serverStatsSnapshotSchema } = await import("@zcode/shared");
+  const context = await startTestServer();
+  try {
+    assert.equal(
+      (await fetch(`http://127.0.0.1:${context.port}/api/sys-stats?range=7d`)).status,
+      400,
+    );
+    for (const range of ["1m", "15m", "24h"]) {
+      const response = await fetch(`http://127.0.0.1:${context.port}/api/sys-stats?range=${range}`);
+      assert.equal(response.status, 200);
+      const snapshot = serverStatsSnapshotSchema.parse(await response.json());
+      assert.equal(snapshot.range, range);
+      assert.ok(snapshot.points.length <= 288);
+    }
+  } finally {
+    await context.close();
+  }
+});

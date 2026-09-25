@@ -68,3 +68,23 @@ test("sys-stats sampler reports availability per platform", async () => {
     assert.deepEqual(snapshot.points, []);
   }
 });
+
+test("memory cache and swap reflect kernel counters without adding cache to used", () => {
+  const mem = parseProcMemInfo(
+    "MemTotal: 1000 kB\nMemAvailable: 400 kB\nCached: 250 kB\nSReclaimable: 50 kB\nShmem: 20 kB\nSwapTotal: 100 kB\nSwapFree: 80 kB\n",
+  );
+  assert.equal(mem.cachedBytes, 280 * 1024);
+  assert.equal(mem.swapUsedBytes, 20 * 1024);
+});
+test("CPU guest time is already counted in user/nice", () => {
+  assert.equal(parseProcStat("cpu 100 0 50 800 100 0 10 0 30 5").total, 1060);
+});
+test("disk counters use 512-byte sectors and only selected leaf devices", async () => {
+  const { parseProcDiskStats } = await import("../src/sysStats.js");
+  const value = parseProcDiskStats(
+    "8 0 sda 1 0 10 0 2 0 20 0 0 0 0\n8 1 sda1 1 0 8 0 2 0 16 0 0 0 0\n253 0 dm-0 1 0 8 0 2 0 16 0 0 0 0",
+    new Set(["sda"]),
+  );
+  assert.deepEqual(value, { rxBytes: 5120, txBytes: 10240 });
+  assert.equal(parseProcDiskStats("", new Set()), null);
+});

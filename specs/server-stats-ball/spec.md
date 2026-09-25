@@ -1,43 +1,42 @@
-# Server stats floating ball
+# Server performance monitor
 
-## Rules and ownership
+## Product and ownership
 
-- `packages/server/src/sysStats.ts` is the single owner of system sampling. It reads `/proc` directly (no new dependencies): CPU from `/proc/stat` (usage from the delta of two samples, idle includes iowait), memory from `/proc/meminfo` (used = MemTotal − MemAvailable; `os.freemem()` is not used because it counts cache as used), network from `/proc/net/dev` (sum rx/tx bytes of all interfaces except `lo`, rate = delta ÷ interval, counter resets clamp to 0). Each point also carries `os.loadavg()`, uptime (`/proc/uptime`), and the server process RSS (`process.memoryUsage().rss`).
-- The sampler ticks once per second and keeps the most recent 60 points. It starts lazily on the first `GET /api/sys-stats` request and stops by itself after 30 seconds without a request, so an unwatched server does no sampling work. The timer is unref'd.
-- `GET /api/sys-stats` (registered in `packages/server/src/http.ts`) returns `{ available, points }`. On non-Linux hosts (no readable `/proc`) it reports `available: false` with empty points instead of failing. The route sits under the existing `/api/*` token middleware; no extra auth (Cloudflare Access stays the outer boundary).
-- `packages/ui/src/components/ServerStatsBall.tsx` owns presentation and is mounted once in `packages/ui/src/root/RootShell.tsx`. It renders only on Web (`platform.canSelectFilePath === false`); desktop renders nothing. If a poll fails or reports `available: false`, the ball hides and polling stops (retried on the next visibility transition), so desktop origins and non-stats servers never show it.
-- Polling: every 2 s; paused while `document.hidden`, resumed on return. 60 points × 1 s sampling covers the visible window.
-- Collapsed state: a `position: fixed` ball showing CPU% and memory%, recolored at >80% (warning) and >95% (destructive) using semantic color tokens. Expanded state: a small panel with SVG-polyline mini charts (CPU, memory, down/up rate) fed by the returned points — no chart library.
-- Dragging: pointer events with a click threshold to toggle expand; on release the ball snaps to the nearest horizontal edge; position (`side` + top offset) persists in `localStorage` under `zcode:server-stats-ball`; clamping accounts for `env(safe-area-inset-*)` (measured once) so the ball never hides under mobile browser chrome or covers the bottom input area.
+- Web only, mounted once in RootShell. Desktop and hosts without `/proc` initially show nothing. Server `sysStats` owns sampling, bounded history and UTC-day counters; shared `server-stats` owns the HTTP contract; `useServerStats` owns client polling; the floating component owns presentation preferences only.
+- First authenticated `GET /api/sys-stats` starts a single serial 1s sampler. It then runs while the server process lives, even without viewers, to maintain history. Timer is unref'd. No extra process, Agent, dependencies or persistence. Restart clears history/counters. Core read failures report unavailable; optional disk failures yield null, never false zero. Failed samples reset delta baselines; recovery does not invent data.
+- `?range=1m|15m|24h` defaults to 1m; invalid ranges return 400. Response includes latest raw point independently of the selected range, host name/core count, range/step, monitoring start, and UTC daily traffic. Existing `available` and `points` remain. All requests retain current API auth. Desktop continuous and mobile replayable conversation streams are unchanged: telemetry is same-origin HTTP only.
+- CPU uses `/proc/stat` delta, first eight counters only (guest time is already included), idle includes iowait. Memory used remains total minus available. Cache is max(0, Cached + SReclaimable - Shmem); it overlaps the available/used estimate and is shown separately, not stacked additively with used. Swap used = total minus free. Load, uptime and process RSS remain real readings.
+- Root filesystem capacity uses async statfs(`/`), refreshed every 10s; used = (blocks - bfree) \* bsize. Disk I/O is host-wide leaf block devices from `/sys/block` (exclude loop/ram/zram and stacked devices with slaves), counters from `/proc/diskstats`, sectors = 512 bytes; label explicitly distinguishes it from root filesystem capacity. Device-set changes reset rate baseline. Unsupported data shows `—`.
+- Network sums non-loopback interfaces. Rates use elapsed time and clamp counter resets. Daily UTC traffic accumulates observed deltas only, resets on UTC day rollover, and carries coverage start; missing intervals are excluded. UI states monitoring start/restart and UTC partial-day coverage explicitly.
+- History uses bounded buckets: 1m / 1s (60), 15m / 5s (180), 24h / 5m (288). CPU and rates are averaged over valid samples within a bucket; peaks retained independently; other gauges take the last sample. Points retain actual timestamps, no backfill. Client draws fixed-duration timestamp axes and breaks lines over missing buckets. Returned payload is bounded by the selected window.
 
-## Event order
+## Interface and interaction
+
+- Three persistent collapsed modes: dual CPU/memory rings (default), capsule with CPU/memory/network, mini capsule with two usage bars and download. Rings and numeric values warn above 80%, critical above 95%. Status has readable online/offline text as well as color. Use ZCode semantic tokens, text-ui fonts, restrained shadow and native Button controls; no external fonts or chart libraries.
+- Expanded panel follows the supplied concept: host/status/header actions; CPU chart/load/peak; used/total memory bar plus cache, swap and RSS; mirrored down/up network graph with shared linear scale, peaks and observed UTC-day totals; root disk capacity and host disk I/O; 1m/15m/24h selector and sampling resolution.
+- Pin prevents outside-click dismissal; collapse and Escape still close. Shape and pin preference persist locally; range is local presentation state. Existing `zcode:server-stats-ball` side/top position migrates unchanged. No sampler facts go to localStorage/Zustand.
+- Pointer drag retains grab offset, threshold 6px, snap to closest side, cancellation restores stored position. Click/Enter/Space open/close. Resize and safe-area changes reclamp. Expanded panel uses measured height and viewport bounds, internally scrolls on short screens; narrow phones use an inset full-width panel above controls. Focus returns to trigger on collapse/Escape.
+- Poll through hook every 2s after previous completion, pause/abort when hidden; range changes abort stale requests. First unsupported response hides and stops until visibility return. After a successful response, connection failures preserve last readings, mark disconnected and retry every 10s while visible; current stale age is shown. RTT is HTTP round-trip latency, not ICMP ping.
 
 ```mermaid
 sequenceDiagram
-  participant Page as RootShell (Web only)
-  participant Ball as ServerStatsBall
-  participant API as GET /api/sys-stats
-  participant Samp as sysStats sampler
-  Page->>Ball: mount (canSelectFilePath === false)
-  Ball->>API: first poll (every 2s, only when visible)
-  API->>Samp: touch() — lazy start / keep-alive
-  Samp->>Samp: 1s tick, ring buffer 60 points
-  API-->>Ball: { available, points }
-  Ball->>Ball: render ball / panel, drag → snap → localStorage
-  Note over Samp: no request for 30s → sampler stops
+  participant UI as Web floating monitor
+  participant Hook as useServerStats
+  participant API as HTTP route
+  participant Sampler as single sysStats owner
+  UI->>Hook: range selection
+  Hook->>Hook: abort previous request / invalidate response
+  Hook->>API: GET sys-stats?range
+  API->>Sampler: touch(range), start once
+  Sampler->>Sampler: serial 1s sample, bounded buckets, UTC counters
+  Sampler-->>Hook: latest + selected history + coverage
+  Hook-->>UI: read-only snapshot + RTT / connection status
+  Note over Sampler: continues without viewers; restart clears history
+  Note over Hook: hidden stops HTTP polling, never server sampling
 ```
 
-## Acceptance scenarios
+## Acceptance and validation
 
-1. On the VPS web deployment the ball appears, CPU%/mem% update every 2 s, colors cross the 80/95 thresholds, and the panel shows four mini charts over the last 60 s.
-2. Switching the tab to background stops network polling; returning resumes it without duplicate intervals.
-3. Dragging the ball to another half of the screen snaps it to the nearest edge, the position survives a reload, and the resting position stays inside the safe-area bounds on mobile (no overlap with browser chrome).
-4. On desktop, or when `/api/sys-stats` is unavailable, nothing renders and no recurring failing requests are made.
-5. macOS dev server returns `{ available: false }` without crashing; Linux sampling produces monotonic points with plausible CPU/rate deltas.
-
-## Verification (2026-09-25)
-
-- Node 24.14.0 (fnm), `pnpm exec tsx --test packages/server/test/sysStats.test.ts`: passed — `/proc/stat` delta math (idle+iowait), kB→bytes conversion with `MemFree` fallback, `/proc/net/dev` sums excluding `lo`; sampler availability: on this machine `/proc` is absent, first `touch()` now returns `{available:false}` synchronously (fixed a bug where the first response claimed available before the baseline sample finished); on Linux the same branch asserts a first point with real `memTotalBytes`.
-- Node 24.14.0, `pnpm exec tsx --test packages/server/test/httpUpload.test.ts` also covers `GET /api/sys-stats` returning 200 under the same `/api/*` middleware.
-- Component rendering/drag/poll behavior was reviewed against DESIGN.md tokens (`text-ui-*`, `bg-popover`, `text-warning`/`text-destructive`) and toast.tsx safe-area precedents; pixel-level mobile check (scenario 3) needs the real VPS + phone browser and was not exercised locally. Desktop hiding is enforced by `platform.canSelectFilePath === false`.
-- `pnpm typecheck` passed; `pnpm lint` 0 errors / 70 pre-existing warnings; `pnpm architecture:check --changed` 0 violations.
+- Deterministic backend tests: mem/cache/swap and guest accounting; disk sector parsing/device filtering; UTC rollover, reset and gap baselines; bucket average/peak/retention, cold 24h window, invalid range; serial initialization and Linux/non-Linux availability.
+- Browser E2E against real Web UI with deterministic HTTP fixtures: all three modes, persisted choice/position, click and keyboard toggle, pin/outside/Escape, dragging/cancel/resize, range requests and stale-response protection, offline retention/recovery, unavailable hiding and visibility pause. Render light/dark, desktop viewport and 390px / 320px phone viewports, ensure panel stays within bounds. Fixture telemetry is not evidence of real VPS measurements.
+- Run pnpm typecheck, pnpm lint, architecture checks, targeted backend/unit/E2E tests and production Web build. Linux CI tests real sampler availability. Local macOS cannot validate live `/proc`/root disk measurements; report this separately.
